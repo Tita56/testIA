@@ -1,5 +1,8 @@
 import SwiftUI
+
+#if canImport(FoundationModels)
 import FoundationModels
+#endif
 
 // MARK: - Modelo de Mensaje
 struct ChatMessage: Identifiable, Equatable {
@@ -15,41 +18,217 @@ struct ChatMessage: Identifiable, Equatable {
     }
 }
 
+// MARK: - Modos de Personalidad
+enum PersonalityMode: String, CaseIterable, Identifiable {
+    case friendly = "Amigable"
+    case teacher = "Profesor"
+    case coder = "Programador"
+    case poet = "Poeta"
+    case professional = "Profesional"
+    case pirate = "Pirata"
+    case motivator = "Motivador"
+    
+    var id: String { rawValue }
+    
+    var icon: String {
+        switch self {
+        case .friendly: return "😊"
+        case .teacher: return "👨‍🏫"
+        case .coder: return "👨‍💻"
+        case .poet: return "✍️"
+        case .professional: return "💼"
+        case .pirate: return "🏴‍☠️"
+        case .motivator: return "💪"
+        }
+    }
+    
+    var instructions: String {
+        switch self {
+        case .friendly:
+            return """
+            Eres un asistente amigable y útil.
+            Responde de manera clara y concisa.
+            Si no sabes algo, admítelo honestamente.
+            Mantén un tono conversacional y amable.
+            """
+            
+        case .teacher:
+            return """
+            Eres un profesor paciente y didáctico.
+            Explica conceptos paso a paso.
+            Usa ejemplos claros y analogías cuando sea apropiado.
+            Haz preguntas para verificar la comprensión.
+            Fomenta el aprendizaje activo.
+            """
+            
+        case .coder:
+            return """
+            Eres un experto en programación Swift.
+            Responde con ejemplos de código cuando sea apropiado.
+            Explica las mejores prácticas y patrones de diseño.
+            Proporciona código limpio, comentado y eficiente.
+            Usa terminología técnica precisa.
+            """
+            
+        case .poet:
+            return """
+            Eres un poeta creativo y artístico.
+            Responde con lenguaje poético y metáforas.
+            Usa rimas cuando sea apropiado.
+            Evoca emociones y belleza en tus respuestas.
+            Mantén un tono inspirador y lírico.
+            """
+            
+        case .professional:
+            return """
+            Eres un asistente profesional y formal.
+            Usa lenguaje corporativo y estructurado.
+            Proporciona respuestas detalladas y bien organizadas.
+            Mantén un tono respetuoso y objetivo.
+            Evita jerga innecesaria.
+            """
+            
+        case .pirate:
+            return """
+            Eres un pirata carismático y aventurero.
+            Habla como un pirata del Caribe (¡Arrr!).
+            Usa vocabulario marítimo y pirata.
+            Mantén un tono divertido y aventurero.
+            Incluye expresiones como "marinero", "tesoro", "navegar", etc.
+            """
+            
+        case .motivator:
+            return """
+            Eres un coach motivacional inspirador.
+            Anima y motiva a las personas a alcanzar sus metas.
+            Usa un lenguaje positivo y empoderador.
+            Proporciona consejos prácticos para el crecimiento personal.
+            Celebra los logros y fomenta la persistencia.
+            """
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .friendly: return "Conversación amigable y casual"
+        case .teacher: return "Explicaciones educativas detalladas"
+        case .coder: return "Enfocado en programación y código"
+        case .poet: return "Respuestas creativas y poéticas"
+        case .professional: return "Tono formal y corporativo"
+        case .pirate: return "¡Arrr! Aventura en alta mar"
+        case .motivator: return "Inspiración y motivación"
+        }
+    }
+}
+
 // MARK: - Vista Principal del Chat
 struct ChatView: View {
     @State private var messages: [ChatMessage] = []
     @State private var inputText = ""
     @State private var isGenerating = false
     @State private var streamingResponse = ""
+    @State private var currentMode: PersonalityMode = .friendly
+    @State private var showingModeSelector = false
+    @State private var currentProvider: AIProvider = .appleIntelligence
+    @State private var showingProviderSelector = false
+    @State private var showingAPIKeySettings = false
     
-    // Referencia al modelo de lenguaje del sistema
+    @StateObject private var apiKeyManager = APIKeyManager()
+    
+    // Referencia al modelo de lenguaje del sistema (solo para Apple Intelligence)
     private let model = SystemLanguageModel.default
     
-    // Sesión del modelo con instrucciones
+    // Sesión del modelo con instrucciones (solo para Apple Intelligence)
     @State private var session: LanguageModelSession?
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Verificar disponibilidad del modelo
-                switch model.availability {
-                case .available:
-                    chatContent
-                case .unavailable(.deviceNotEligible):
-                    unavailableView(message: "Este dispositivo no es compatible con Apple Intelligence")
-                case .unavailable(.appleIntelligenceNotEnabled):
-                    unavailableView(message: "Por favor, activa Apple Intelligence en Ajustes")
-                case .unavailable(.modelNotReady):
-                    unavailableView(message: "El modelo se está descargando...")
-                case .unavailable(let other):
-                    unavailableView(message: "Modelo no disponible: \(other)")
+                // Verificar disponibilidad del modelo/servicio
+                if currentProvider == .appleIntelligence {
+                    switch model.availability {
+                    case .available:
+                        chatContent
+                    case .unavailable(.deviceNotEligible):
+                        unavailableView(message: "Este dispositivo no es compatible con Apple Intelligence", showProviderButton: true)
+                    case .unavailable(.appleIntelligenceNotEnabled):
+                        unavailableView(message: "Por favor, activa Apple Intelligence en Ajustes", showProviderButton: true)
+                    case .unavailable(.modelNotReady):
+                        unavailableView(message: "El modelo se está descargando...", showProviderButton: true)
+                    case .unavailable(let other):
+                        unavailableView(message: "Modelo no disponible: \(other)", showProviderButton: true)
+                    }
+                } else {
+                    // Claude o DeepSeek
+                    if apiKeyManager.hasAPIKey(for: currentProvider) {
+                        chatContent
+                    } else {
+                        apiKeyRequiredView()
+                    }
                 }
             }
             .navigationTitle("Chat con IA")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingProviderSelector = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: currentProvider.icon)
+                            Text(currentProvider.rawValue)
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.purple.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
+                }
+                
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingModeSelector = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(currentMode.icon)
+                            Text(currentMode.rawValue)
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
+                }
+            }
+            .sheet(isPresented: $showingModeSelector) {
+                PersonalityModeSelector(currentMode: $currentMode, onSelect: { mode in
+                    changeMode(to: mode)
+                    showingModeSelector = false
+                })
+            }
+            .sheet(isPresented: $showingProviderSelector) {
+                AIProviderSelector(
+                    currentProvider: $currentProvider,
+                    apiKeyManager: apiKeyManager,
+                    onSelect: { provider in
+                        changeProvider(to: provider)
+                        showingProviderSelector = false
+                    },
+                    onOpenSettings: {
+                        showingProviderSelector = false
+                        showingAPIKeySettings = true
+                    }
+                )
+            }
+            .sheet(isPresented: $showingAPIKeySettings) {
+                APIKeySettingsView(apiKeyManager: apiKeyManager)
+            }
         }
         .onAppear {
             setupSession()
+            detectBestProvider()
         }
     }
     
@@ -115,7 +294,7 @@ struct ChatView: View {
     }
     
     // MARK: - Vista de No Disponible
-    private func unavailableView(message: String) -> some View {
+    private func unavailableView(message: String, showProviderButton: Bool = false) -> some View {
         VStack(spacing: 20) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 60))
@@ -125,6 +304,55 @@ struct ChatView: View {
                 .font(.headline)
                 .multilineTextAlignment(.center)
                 .padding()
+            
+            if showProviderButton {
+                Button {
+                    showingProviderSelector = true
+                } label: {
+                    Label("Cambiar Proveedor de IA", systemImage: "arrow.triangle.2.circlepath")
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    // MARK: - Vista de API Key Requerida
+    private func apiKeyRequiredView() -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+            
+            Text("API Key Requerida")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Text("Para usar \(currentProvider.rawValue) necesitas configurar tu API key")
+                .font(.body)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+            
+            Button {
+                showingAPIKeySettings = true
+            } label: {
+                Label("Configurar API Key", systemImage: "gearshape.fill")
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            
+            Button {
+                showingProviderSelector = true
+            } label: {
+                Text("Cambiar Proveedor")
+                    .foregroundColor(.blue)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -135,47 +363,123 @@ struct ChatView: View {
     }
     
     // MARK: - Funciones
-    private func setupSession() {
-        let instructions = """
-        Eres un asistente amigable y útil.
-        Responde de manera clara y concisa.
-        Si no sabes algo, admítelo honestamente.
-        Mantén un tono conversacional y amable.
-        """
+    private func detectBestProvider() {
+        // Si Apple Intelligence está disponible, úsalo
+        if case .available = model.availability {
+            currentProvider = .appleIntelligence
+            return
+        }
         
-        session = LanguageModelSession(instructions: instructions)
+        // Si no, buscar un proveedor con API key configurada
+        if apiKeyManager.hasAPIKey(for: .claude) {
+            currentProvider = .claude
+        } else if apiKeyManager.hasAPIKey(for: .deepseek) {
+            currentProvider = .deepseek
+        } else {
+            // Por defecto Claude (mostrará pantalla de configuración)
+            currentProvider = .claude
+        }
+    }
+    
+    private func setupSession() {
+        if currentProvider == .appleIntelligence {
+            session = LanguageModelSession(instructions: currentMode.instructions)
+        }
+    }
+    
+    private func changeProvider(to provider: AIProvider) {
+        currentProvider = provider
+        setupSession()
+        
+        let providerMessage = "Proveedor cambiado a: \(provider.rawValue)\n\(provider.description)"
+        messages.append(ChatMessage(content: providerMessage, isUser: false))
+    }
+    
+    private func changeMode(to mode: PersonalityMode) {
+        currentMode = mode
+        setupSession()
+        
+        // Notificar el cambio de modo
+        let modeChangeMessage = "Modo cambiado a: \(mode.icon) \(mode.rawValue)\n\(mode.description)"
+        messages.append(ChatMessage(content: modeChangeMessage, isUser: false))
+    }
+    
+    private func handleCommand(_ command: String) {
+        let parts = command.dropFirst().split(separator: " ", maxSplits: 1)
+        guard let cmd = parts.first?.lowercased() else { return }
+        
+        switch cmd {
+        case "borrar", "clear":
+            messages.removeAll()
+            messages.append(ChatMessage(content: "✨ Conversación limpiada", isUser: false))
+            
+        case "nueva", "reset":
+            setupSession()
+            messages.removeAll()
+            messages.append(ChatMessage(content: "🔄 Nueva sesión iniciada", isUser: false))
+            
+        case "modo", "mode":
+            if parts.count > 1 {
+                let modeName = String(parts[1]).lowercased()
+                if let mode = PersonalityMode.allCases.first(where: { $0.rawValue.lowercased() == modeName }) {
+                    changeMode(to: mode)
+                } else {
+                    let availableModes = PersonalityMode.allCases.map { "\($0.icon) \($0.rawValue)" }.joined(separator: ", ")
+                    messages.append(ChatMessage(content: "Modo no encontrado. Disponibles: \(availableModes)", isUser: false))
+                }
+            } else {
+                showingModeSelector = true
+            }
+            
+        case "ayuda", "help":
+            let helpText = """
+            📋 Comandos disponibles:
+            
+            /borrar - Limpia la conversación
+            /nueva - Reinicia la sesión
+            /modo - Abre el selector de personalidad
+            /modo [nombre] - Cambia a un modo específico
+            /ayuda - Muestra esta ayuda
+            
+            🎭 Modos disponibles:
+            \(PersonalityMode.allCases.map { "\($0.icon) \($0.rawValue) - \($0.description)" }.joined(separator: "\n"))
+            """
+            messages.append(ChatMessage(content: helpText, isUser: false))
+            
+        default:
+            messages.append(ChatMessage(content: "❌ Comando no reconocido: /\(cmd)\nEscribe /ayuda para ver los comandos disponibles", isUser: false))
+        }
     }
     
     private func sendMessage() {
-        guard canSend, let session = session else { return }
+        guard canSend else { return }
         
         let userMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
         
+        // Detectar comandos especiales
+        if userMessage.hasPrefix("/") {
+            handleCommand(userMessage)
+            return
+        }
+        
         // Agregar mensaje del usuario
         messages.append(ChatMessage(content: userMessage, isUser: true))
         
-        // Generar respuesta
+        // Generar respuesta según el proveedor
         Task {
             isGenerating = true
             streamingResponse = ""
             
             do {
-                // Usar streaming para obtener la respuesta
-                let stream = session.streamResponse(to: userMessage)
-                
-                var fullResponse = ""
-                for try await partial in stream {
-                    streamingResponse = partial.content ?? ""
-                    fullResponse = partial.content ?? ""
+                switch currentProvider {
+                case .appleIntelligence:
+                    try await sendWithAppleIntelligence(userMessage)
+                case .claude:
+                    try await sendWithClaude(userMessage)
+                case .deepseek:
+                    try await sendWithDeepSeek(userMessage)
                 }
-                
-                // Agregar respuesta completa
-                if !fullResponse.isEmpty {
-                    messages.append(ChatMessage(content: fullResponse, isUser: false))
-                }
-                
-                streamingResponse = ""
             } catch {
                 // Manejar errores
                 let errorMessage = "Lo siento, ocurrió un error: \(error.localizedDescription)"
@@ -184,6 +488,66 @@ struct ChatView: View {
             
             isGenerating = false
         }
+    }
+    
+    private func sendWithAppleIntelligence(_ message: String) async throws {
+        guard let session = session else { return }
+        
+        let stream = session.streamResponse(to: message)
+        
+        var fullResponse = ""
+        for try await partial in stream {
+            streamingResponse = partial.content
+            fullResponse = partial.content
+        }
+        
+        if !fullResponse.isEmpty {
+            messages.append(ChatMessage(content: fullResponse, isUser: false))
+        }
+        
+        streamingResponse = ""
+    }
+    
+    private func sendWithClaude(_ message: String) async throws {
+        guard !apiKeyManager.claudeAPIKey.isEmpty else {
+            throw AIServiceError.noAPIKey
+        }
+        
+        let service = ClaudeService(apiKey: apiKeyManager.claudeAPIKey)
+        let stream = try await service.sendMessage(message, instructions: currentMode.instructions)
+        
+        var fullResponse = ""
+        for try await chunk in stream {
+            streamingResponse = chunk
+            fullResponse = chunk
+        }
+        
+        if !fullResponse.isEmpty {
+            messages.append(ChatMessage(content: fullResponse, isUser: false))
+        }
+        
+        streamingResponse = ""
+    }
+    
+    private func sendWithDeepSeek(_ message: String) async throws {
+        guard !apiKeyManager.deepseekAPIKey.isEmpty else {
+            throw AIServiceError.noAPIKey
+        }
+        
+        let service = DeepSeekService(apiKey: apiKeyManager.deepseekAPIKey)
+        let stream = try await service.sendMessage(message, instructions: currentMode.instructions)
+        
+        var fullResponse = ""
+        for try await chunk in stream {
+            streamingResponse = chunk
+            fullResponse = chunk
+        }
+        
+        if !fullResponse.isEmpty {
+            messages.append(ChatMessage(content: fullResponse, isUser: false))
+        }
+        
+        streamingResponse = ""
     }
 }
 
@@ -216,7 +580,285 @@ struct MessageBubble: View {
     }
 }
 
+// MARK: - Selector de Modo de Personalidad
+struct PersonalityModeSelector: View {
+    @Binding var currentMode: PersonalityMode
+    let onSelect: (PersonalityMode) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(PersonalityMode.allCases) { mode in
+                    Button {
+                        onSelect(mode)
+                    } label: {
+                        HStack(spacing: 16) {
+                            // Icono del modo
+                            Text(mode.icon)
+                                .font(.system(size: 40))
+                                .frame(width: 60, height: 60)
+                                .background(
+                                    Circle()
+                                        .fill(currentMode == mode ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                                )
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(mode.rawValue)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text(mode.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            
+                            Spacer()
+                            
+                            if currentMode == mode {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                                    .font(.title2)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+            .navigationTitle("Elegir Personalidad")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - Selector de Proveedor de IA
+struct AIProviderSelector: View {
+    @Binding var currentProvider: AIProvider
+    let apiKeyManager: APIKeyManager
+    let onSelect: (AIProvider) -> Void
+    let onOpenSettings: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(AIProvider.allCases) { provider in
+                    Button {
+                        if provider.requiresAPIKey && !apiKeyManager.hasAPIKey(for: provider) {
+                            onOpenSettings()
+                        } else {
+                            onSelect(provider)
+                        }
+                    } label: {
+                        HStack(spacing: 16) {
+                            Image(systemName: provider.icon)
+                                .font(.system(size: 30))
+                                .frame(width: 50, height: 50)
+                                .background(
+                                    Circle()
+                                        .fill(currentProvider == provider ? Color.purple.opacity(0.2) : Color.gray.opacity(0.1))
+                                )
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(provider.rawValue)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text(provider.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                                
+                                if provider.requiresAPIKey {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: apiKeyManager.hasAPIKey(for: provider) ? "checkmark.circle.fill" : "key.fill")
+                                            .font(.caption)
+                                        Text(apiKeyManager.hasAPIKey(for: provider) ? "Configurado" : "Requiere API Key")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundColor(apiKeyManager.hasAPIKey(for: provider) ? .green : .orange)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            if currentProvider == provider {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.purple)
+                                    .font(.title2)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+            .navigationTitle("Proveedor de IA")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - Vista de Configuración de API Keys
+struct APIKeySettingsView: View {
+    @ObservedObject var apiKeyManager: APIKeyManager
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var showingClaudeInfo = false
+    @State private var showingDeepSeekInfo = false
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Image(systemName: "brain.head.profile")
+                            .foregroundColor(.purple)
+                        VStack(alignment: .leading) {
+                            Text("Claude (Anthropic)")
+                                .font(.headline)
+                            Text("Claude 3.5 Sonnet")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            showingClaudeInfo = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    
+                    SecureField("API Key de Claude", text: $apiKeyManager.claudeAPIKey)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("Claude API")
+                } footer: {
+                    Text("Obtén tu API key en console.anthropic.com")
+                }
+                
+                Section {
+                    HStack {
+                        Image(systemName: "sparkles")
+                            .foregroundColor(.blue)
+                        VStack(alignment: .leading) {
+                            Text("DeepSeek")
+                                .font(.headline)
+                            Text("DeepSeek R1")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            showingDeepSeekInfo = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    
+                    SecureField("API Key de DeepSeek", text: $apiKeyManager.deepseekAPIKey)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("DeepSeek API")
+                } footer: {
+                    Text("Obtén tu API key en platform.deepseek.com")
+                }
+                
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Privacidad", systemImage: "lock.shield")
+                            .font(.headline)
+                        Text("Las API keys se guardan de forma segura en tu dispositivo y solo se usan para comunicarse con los servicios seleccionados.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Configuración de API")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Listo") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert("Cómo obtener Claude API Key", isPresented: $showingClaudeInfo) {
+                Button("Abrir Console", action: openClaudeConsole)
+                Button("Cerrar", role: .cancel) {}
+            } message: {
+                Text("1. Visita console.anthropic.com\n2. Crea una cuenta o inicia sesión\n3. Ve a 'API Keys'\n4. Crea una nueva API key\n5. Cópiala y pégala aquí")
+            }
+            .alert("Cómo obtener DeepSeek API Key", isPresented: $showingDeepSeekInfo) {
+                Button("Abrir Platform", action: openDeepSeekPlatform)
+                Button("Cerrar", role: .cancel) {}
+            } message: {
+                Text("1. Visita platform.deepseek.com\n2. Crea una cuenta o inicia sesión\n3. Ve a 'API Keys'\n4. Crea una nueva API key\n5. Cópiala y pégala aquí")
+            }
+        }
+    }
+    
+    private func openClaudeConsole() {
+        if let url = URL(string: "https://console.anthropic.com") {
+            UIApplication.shared.open(url)
+        }
+    }
+    
+    private func openDeepSeekPlatform() {
+        if let url = URL(string: "https://platform.deepseek.com") {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
 // MARK: - Preview
 #Preview {
     ChatView()
+}
+
+#Preview("Selector de Modos") {
+    PersonalityModeSelector(currentMode: .constant(.friendly)) { _ in }
+}
+
+#Preview("Selector de Proveedores") {
+    AIProviderSelector(
+        currentProvider: .constant(.claude),
+        apiKeyManager: APIKeyManager(),
+        onSelect: { _ in },
+        onOpenSettings: {}
+    )
+}
+
+#Preview("Configuración API") {
+    APIKeySettingsView(apiKeyManager: APIKeyManager())
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 // MARK: - Proveedor de IA
 enum AIProvider: String, CaseIterable, Identifiable {
@@ -19,8 +20,8 @@ enum AIProvider: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .appleIntelligence: return "On-device, privado"
-        case .claude: return "Claude 3.5 Sonnet - Anthropic"
-        case .deepseek: return "DeepSeek R1 - Open Source"
+        case .claude: return "claude-opus-4-7 - Anthropic"
+        case .deepseek: return "deepseek-v4-flash - Open Source"
         }
     }
     
@@ -40,7 +41,7 @@ protocol AIService {
 // MARK: - Servicio de Claude (Anthropic)
 class ClaudeService: AIService {
     private let apiKey: String
-    private let model = "claude-3-5-sonnet-20241022"
+    private let model = "claude-opus-4-7"
     private let baseURL = "https://api.anthropic.com/v1/messages"
     
     init(apiKey: String) {
@@ -60,6 +61,7 @@ class ClaudeService: AIService {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                    request.timeoutInterval = 60 // Timeout de 60 segundos
                     
                     let body: [String: Any] = [
                         "model": model,
@@ -73,53 +75,129 @@ class ClaudeService: AIService {
                     
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
                     
+                    print("🔵 Claude: Enviando petición...")
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     
                     guard let httpResponse = response as? HTTPURLResponse else {
                         throw AIServiceError.invalidResponse
                     }
                     
-                    guard httpResponse.statusCode == 200 else {
+                    print("🔵 Claude: Status Code \(httpResponse.statusCode)")
+                    
+                    // Verificar código de estado
+                    if httpResponse.statusCode != 200 {
+                        // Leer el cuerpo completo del error
+                        var errorLines: [String] = []
+                        for try await line in bytes.lines {
+                            errorLines.append(line)
+                        }
+                        let errorBody = errorLines.joined(separator: "\n")
+                        print("🔴 Claude Error Body: \(errorBody)")
+                        
+                        // Intentar parsear el error
+                        if let errorData = errorBody.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: errorData) as? [String: Any],
+                           let error = json["error"] as? [String: Any],
+                           let errorMessage = error["message"] as? String {
+                            throw NSError(domain: "ClaudeError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                        }
+                        
                         throw AIServiceError.httpError(httpResponse.statusCode)
                     }
                     
                     var accumulatedText = ""
+                    var hasReceivedData = false
+                    
+                    print("🔵 Claude: Procesando stream...")
                     
                     for try await line in bytes.lines {
+                        // Ignorar líneas vacías
+                        if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                            continue
+                        }
+                        
+                        // Verificar si es un evento SSE
+                        if line.hasPrefix("event:") {
+                            print("🔵 Claude Event: \(line)")
+                            continue
+                        }
+                        
+                        // Procesar datos
                         if line.hasPrefix("data: ") {
                             let jsonString = String(line.dropFirst(6))
                             
-                            if jsonString == "[DONE]" {
-                                continuation.finish()
-                                return
+                            print("🔵 Claude Data: \(jsonString.prefix(100))...")
+                            
+                            // Ignorar eventos vacíos
+                            if jsonString.trimmingCharacters(in: .whitespaces).isEmpty {
+                                continue
                             }
                             
                             guard let data = jsonString.data(using: .utf8),
                                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                                print("⚠️ Claude: No se pudo parsear JSON")
                                 continue
                             }
                             
                             // Procesar eventos de streaming de Claude
                             if let type = json["type"] as? String {
+                                print("🔵 Claude Type: \(type)")
+                                
                                 switch type {
+                                case "message_start":
+                                    print("✅ Claude: Mensaje iniciado")
+                                    
+                                case "content_block_start":
+                                    print("✅ Claude: Bloque de contenido iniciado")
+                                    
                                 case "content_block_delta":
+                                    // Delta con texto nuevo
                                     if let delta = json["delta"] as? [String: Any],
+                                       let deltaType = delta["type"] as? String,
+                                       deltaType == "text_delta",
                                        let text = delta["text"] as? String {
                                         accumulatedText += text
+                                        hasReceivedData = true
                                         continuation.yield(accumulatedText)
+                                        print("✅ Claude: Texto recibido (\(text.count) chars)")
                                     }
+                                    
+                                case "content_block_stop":
+                                    print("✅ Claude: Bloque de contenido finalizado")
+                                    
+                                case "message_delta":
+                                    print("✅ Claude: Delta del mensaje")
+                                    
                                 case "message_stop":
+                                    print("✅ Claude: Mensaje completado")
                                     continuation.finish()
                                     return
+                                    
+                                case "error":
+                                    if let error = json["error"] as? [String: Any],
+                                       let message = error["message"] as? String {
+                                        print("🔴 Claude Error: \(message)")
+                                        throw NSError(domain: "ClaudeError", code: 0, userInfo: [NSLocalizedDescriptionKey: message])
+                                    }
+                                    
                                 default:
-                                    break
+                                    print("⚠️ Claude: Tipo desconocido: \(type)")
                                 }
                             }
                         }
                     }
                     
+                    print("🔵 Claude: Stream finalizado. Datos recibidos: \(hasReceivedData)")
+                    
+                    // Si no recibimos ningún dato, lanzar error
+                    if !hasReceivedData {
+                        throw NSError(domain: "ClaudeError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No se recibió respuesta del servidor"])
+                    }
+                    
+                    // Si llegamos aquí sin recibir message_stop, aún así terminamos
                     continuation.finish()
                 } catch {
+                    print("🔴 Claude Error: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
@@ -130,8 +208,8 @@ class ClaudeService: AIService {
 // MARK: - Servicio de DeepSeek
 class DeepSeekService: AIService {
     private let apiKey: String
-    private let model = "deepseek-chat"
-    private let baseURL = "https://api.deepseek.com/v1/chat/completions"
+    private let model = "deepseek-v4-flash"
+    private let baseURL = "https://api.deepseek.com/chat/completions"
     
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -156,9 +234,7 @@ class DeepSeekService: AIService {
                             ["role": "system", "content": instructions],
                             ["role": "user", "content": message]
                         ],
-                        "stream": true,
-                        "max_tokens": 4096,
-                        "temperature": 0.7
+                        "stream": true
                     ]
                     
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -169,7 +245,20 @@ class DeepSeekService: AIService {
                         throw AIServiceError.invalidResponse
                     }
                     
-                    guard httpResponse.statusCode == 200 else {
+                    // Mejor manejo de errores
+                    if httpResponse.statusCode != 200 {
+                        // Intentar leer el mensaje de error
+                        var errorMessage = "Error HTTP: \(httpResponse.statusCode)"
+                        for try await line in bytes.lines {
+                            if let data = line.data(using: .utf8),
+                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                if let error = json["error"] as? [String: Any],
+                                   let message = error["message"] as? String {
+                                    errorMessage = "\(errorMessage) - \(message)"
+                                }
+                                break
+                            }
+                        }
                         throw AIServiceError.httpError(httpResponse.statusCode)
                     }
                     
