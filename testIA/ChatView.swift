@@ -135,17 +135,19 @@ struct ChatView: View {
     
     @StateObject private var apiKeyManager = APIKeyManager()
     
+    #if canImport(FoundationModels)
     // Referencia al modelo de lenguaje del sistema (solo para Apple Intelligence)
     private let model = SystemLanguageModel.default
-    
-    // Sesión del modelo con instrucciones (solo para Apple Intelligence)
+    // Sesión del modelo con instrucciones
     @State private var session: LanguageModelSession?
+    #endif
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Verificar disponibilidad del modelo/servicio
                 if currentProvider == .appleIntelligence {
+                    #if canImport(FoundationModels)
                     switch model.availability {
                     case .available:
                         chatContent
@@ -158,55 +160,54 @@ struct ChatView: View {
                     case .unavailable(let other):
                         unavailableView(message: "Modelo no disponible: \(other)", showProviderButton: true)
                     }
+                    #else
+                    // Si FoundationModels no está disponible, Apple Intelligence nunca lo está
+                    unavailableView(message: "Apple Intelligence no soportado en esta plataforma", showProviderButton: true)
+                    #endif
                 } else {
                     // Claude o DeepSeek
                     if apiKeyManager.hasAPIKey(for: currentProvider) {
                         chatContent
                     } else {
-                        apiKeyRequiredView()
+                        apiKeyRequiredView
                     }
                 }
             }
             .navigationTitle("Chat con IA")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
+                // Botón de proveedor (izquierda)
+                #if os(iOS)
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingProviderSelector = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: currentProvider.icon)
-                            Text(currentProvider.rawValue)
-                                .font(.caption)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.purple.opacity(0.1))
-                        .clipShape(Capsule())
-                    }
+                    providerButton
                 }
+                #elseif os(macOS)
+                ToolbarItem(placement: .navigation) {
+                    providerButton
+                }
+                #endif
                 
+                // Botón de modo (derecha)
+                #if os(iOS)
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingModeSelector = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(currentMode.icon)
-                            Text(currentMode.rawValue)
-                                .font(.caption)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Capsule())
-                    }
+                    modeButton
                 }
+                #elseif os(macOS)
+                ToolbarItem(placement: .primaryAction) {
+                    modeButton
+                }
+                #endif
             }
             .sheet(isPresented: $showingModeSelector) {
                 PersonalityModeSelector(currentMode: $currentMode, onSelect: { mode in
                     changeMode(to: mode)
                     showingModeSelector = false
                 })
+                #if os(iOS)
+                .presentationDetents([.medium, .large])
+                #endif
             }
             .sheet(isPresented: $showingProviderSelector) {
                 AIProviderSelector(
@@ -221,6 +222,9 @@ struct ChatView: View {
                         showingAPIKeySettings = true
                     }
                 )
+                #if os(iOS)
+                .presentationDetents([.medium, .large])
+                #endif
             }
             .sheet(isPresented: $showingAPIKeySettings) {
                 APIKeySettingsView(apiKeyManager: apiKeyManager)
@@ -229,6 +233,39 @@ struct ChatView: View {
         .onAppear {
             setupSession()
             detectBestProvider()
+        }
+    }
+    
+    // MARK: - Botones del toolbar
+    private var providerButton: some View {
+        Button {
+            showingProviderSelector = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: currentProvider.icon)
+                Text(currentProvider.rawValue)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.purple.opacity(0.1))
+            .clipShape(Capsule())
+        }
+    }
+    
+    private var modeButton: some View {
+        Button {
+            showingModeSelector = true
+        } label: {
+            HStack(spacing: 4) {
+                Text(currentMode.icon)
+                Text(currentMode.rawValue)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.blue.opacity(0.1))
+            .clipShape(Capsule())
         }
     }
     
@@ -290,7 +327,15 @@ struct ChatView: View {
             .disabled(!canSend && !isGenerating)
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(inputBarBackground)
+    }
+    
+    private var inputBarBackground: Color {
+        #if os(iOS)
+        return Color(uiColor: .systemBackground)
+        #elseif os(macOS)
+        return Color(nsColor: .controlBackgroundColor)
+        #endif
     }
     
     // MARK: - Vista de No Disponible
@@ -321,7 +366,7 @@ struct ChatView: View {
     }
     
     // MARK: - Vista de API Key Requerida
-    private func apiKeyRequiredView() -> some View {
+    private var apiKeyRequiredView: some View {
         VStack(spacing: 20) {
             Image(systemName: "key.fill")
                 .font(.system(size: 60))
@@ -364,11 +409,12 @@ struct ChatView: View {
     
     // MARK: - Funciones
     private func detectBestProvider() {
-        // Si Apple Intelligence está disponible, úsalo
+        #if canImport(FoundationModels)
         if case .available = model.availability {
             currentProvider = .appleIntelligence
             return
         }
+        #endif
         
         // Si no, buscar un proveedor con API key configurada
         if apiKeyManager.hasAPIKey(for: .claude) {
@@ -382,9 +428,11 @@ struct ChatView: View {
     }
     
     private func setupSession() {
+        #if canImport(FoundationModels)
         if currentProvider == .appleIntelligence {
             session = LanguageModelSession(instructions: currentMode.instructions)
         }
+        #endif
     }
     
     private func changeProvider(to provider: AIProvider) {
@@ -399,7 +447,6 @@ struct ChatView: View {
         currentMode = mode
         setupSession()
         
-        // Notificar el cambio de modo
         let modeChangeMessage = "Modo cambiado a: \(mode.icon) \(mode.rawValue)\n\(mode.description)"
         messages.append(ChatMessage(content: modeChangeMessage, isUser: false))
     }
@@ -457,31 +504,32 @@ struct ChatView: View {
         let userMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
         
-        // Detectar comandos especiales
         if userMessage.hasPrefix("/") {
             handleCommand(userMessage)
             return
         }
         
-        // Agregar mensaje del usuario
         messages.append(ChatMessage(content: userMessage, isUser: true))
         
-        // Generar respuesta según el proveedor
         Task {
             isGenerating = true
             streamingResponse = ""
             
             do {
                 switch currentProvider {
+                #if canImport(FoundationModels)
                 case .appleIntelligence:
                     try await sendWithAppleIntelligence(userMessage)
+                #else
+                case .appleIntelligence:
+                    throw AIServiceError.notAvailable
+                #endif
                 case .claude:
                     try await sendWithClaude(userMessage)
                 case .deepseek:
                     try await sendWithDeepSeek(userMessage)
                 }
             } catch {
-                // Manejar errores
                 let errorMessage = "Lo siento, ocurrió un error: \(error.localizedDescription)"
                 messages.append(ChatMessage(content: errorMessage, isUser: false))
             }
@@ -490,6 +538,7 @@ struct ChatView: View {
         }
     }
     
+    #if canImport(FoundationModels)
     private func sendWithAppleIntelligence(_ message: String) async throws {
         guard let session = session else { return }
         
@@ -507,6 +556,7 @@ struct ChatView: View {
         
         streamingResponse = ""
     }
+    #endif
     
     private func sendWithClaude(_ message: String) async throws {
         guard !apiKeyManager.claudeAPIKey.isEmpty else {
@@ -564,7 +614,7 @@ struct MessageBubble: View {
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
                 Text(message.content)
                     .padding(12)
-                    .background(message.isUser ? Color.blue : Color(.systemGray5))
+                    .background(message.isUser ? Color.blue : nonUserBubbleBackground)
                     .foregroundColor(message.isUser ? .white : .primary)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                 
@@ -578,6 +628,15 @@ struct MessageBubble: View {
             }
         }
     }
+    
+    // Platform‑appropriate background for non‑user bubbles
+    private var nonUserBubbleBackground: Color {
+        #if os(iOS)
+        return Color(uiColor: .systemGray5)
+        #elseif os(macOS)
+        return Color(nsColor: .windowBackgroundColor)
+        #endif
+    }
 }
 
 // MARK: - Selector de Modo de Personalidad
@@ -588,46 +647,46 @@ struct PersonalityModeSelector: View {
     
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(PersonalityMode.allCases) { mode in
-                    Button {
-                        onSelect(mode)
-                    } label: {
-                        HStack(spacing: 16) {
-                            // Icono del modo
-                            Text(mode.icon)
-                                .font(.system(size: 40))
-                                .frame(width: 60, height: 60)
-                                .background(
-                                    Circle()
-                                        .fill(currentMode == mode ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
-                                )
+            List(PersonalityMode.allCases) { mode in
+                Button {
+                    onSelect(mode)
+                } label: {
+                    HStack(spacing: 16) {
+                        Text(mode.icon)
+                            .font(.system(size: 40))
+                            .frame(width: 60, height: 60)
+                            .background(
+                                Circle()
+                                    .fill(currentMode == mode ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(mode.rawValue)
+                                .font(.headline)
+                                .foregroundColor(.primary)
                             
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(mode.rawValue)
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                
-                                Text(mode.description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                            
-                            Spacer()
-                            
-                            if currentMode == mode {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.blue)
-                                    .font(.title2)
-                            }
+                            Text(mode.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
                         }
-                        .padding(.vertical, 8)
+                        
+                        Spacer()
+                        
+                        if currentMode == mode {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.blue)
+                                .font(.title2)
+                        }
                     }
+                    .padding(.vertical, 8)
                 }
             }
+            .listStyle(.plain)                     // <- Clave: evita estilos agrupados que ocultan contenido
             .navigationTitle("Elegir Personalidad")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cerrar") {
@@ -636,7 +695,6 @@ struct PersonalityModeSelector: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
     }
 }
 
@@ -702,7 +760,9 @@ struct AIProviderSelector: View {
                 }
             }
             .navigationTitle("Proveedor de IA")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cerrar") {
@@ -719,7 +779,7 @@ struct AIProviderSelector: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        // presentationDetents se maneja en el .sheet que la muestra
     }
 }
 
@@ -727,6 +787,7 @@ struct AIProviderSelector: View {
 struct APIKeySettingsView: View {
     @ObservedObject var apiKeyManager: APIKeyManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL // multiplataforma para abrir URLs
     
     @State private var showingClaudeInfo = false
     @State private var showingDeepSeekInfo = false
@@ -757,7 +818,9 @@ struct APIKeySettingsView: View {
                     SecureField("API Key de Claude", text: $apiKeyManager.claudeAPIKey)
                         .textContentType(.password)
                         .autocorrectionDisabled()
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 } header: {
                     Text("Claude API")
                 } footer: {
@@ -787,7 +850,9 @@ struct APIKeySettingsView: View {
                     SecureField("API Key de DeepSeek", text: $apiKeyManager.deepseekAPIKey)
                         .textContentType(.password)
                         .autocorrectionDisabled()
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 } header: {
                     Text("DeepSeek API")
                 } footer: {
@@ -805,7 +870,9 @@ struct APIKeySettingsView: View {
                 }
             }
             .navigationTitle("Configuración de API")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Listo") {
@@ -814,13 +881,13 @@ struct APIKeySettingsView: View {
                 }
             }
             .alert("Cómo obtener Claude API Key", isPresented: $showingClaudeInfo) {
-                Button("Abrir Console", action: openClaudeConsole)
+                Button("Abrir Console") { openClaudeConsole() }
                 Button("Cerrar", role: .cancel) {}
             } message: {
                 Text("1. Visita console.anthropic.com\n2. Crea una cuenta o inicia sesión\n3. Ve a 'API Keys'\n4. Crea una nueva API key\n5. Cópiala y pégala aquí")
             }
             .alert("Cómo obtener DeepSeek API Key", isPresented: $showingDeepSeekInfo) {
-                Button("Abrir Platform", action: openDeepSeekPlatform)
+                Button("Abrir Platform") { openDeepSeekPlatform() }
                 Button("Cerrar", role: .cancel) {}
             } message: {
                 Text("1. Visita platform.deepseek.com\n2. Crea una cuenta o inicia sesión\n3. Ve a 'API Keys'\n4. Crea una nueva API key\n5. Cópiala y pégala aquí")
@@ -830,18 +897,19 @@ struct APIKeySettingsView: View {
     
     private func openClaudeConsole() {
         if let url = URL(string: "https://console.anthropic.com") {
-            UIApplication.shared.open(url)
+            openURL(url) // funciona en iOS, macOS, etc.
         }
     }
     
     private func openDeepSeekPlatform() {
         if let url = URL(string: "https://platform.deepseek.com") {
-            UIApplication.shared.open(url)
+            openURL(url)
         }
     }
 }
 
-// MARK: - Preview
+// MARK: - Preview (solo iOS, para macOS se puede quitar o adaptar)
+#if os(iOS)
 #Preview {
     ChatView()
 }
@@ -862,3 +930,4 @@ struct APIKeySettingsView: View {
 #Preview("Configuración API") {
     APIKeySettingsView(apiKeyManager: APIKeyManager())
 }
+#endif
