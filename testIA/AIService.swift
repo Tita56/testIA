@@ -21,7 +21,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .appleIntelligence: return "On-device, privado"
         case .claude: return "claude-opus-4-7 - Anthropic"
-        case .deepseek: return "deepseek-v4-flash - Open Source"
+        case .deepseek: return "deepseek-v4-pro - Open Source"
         }
     }
     
@@ -208,7 +208,7 @@ class ClaudeService: AIService {
 // MARK: - Servicio de DeepSeek
 class DeepSeekService: AIService {
     private let apiKey: String
-    private let model = "deepseek-v4-flash"
+    private let model = "deepseek-v4-pro"
     private let baseURL = "https://api.deepseek.com/chat/completions"
     
     init(apiKey: String) {
