@@ -834,7 +834,7 @@ struct APIKeySettingsView: View {
                         VStack(alignment: .leading) {
                             Text("DeepSeek")
                                 .font(.headline)
-                            Text("DeepSeek R1")
+                            Text("DeepSeek V4 Pro")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
