@@ -1,7 +1,14 @@
 import SwiftUI
+import Foundation // por si acaso
 
 #if canImport(FoundationModels)
 import FoundationModels
+#endif
+
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 // MARK: - Modelo de Mensaje
@@ -132,6 +139,7 @@ struct ChatView: View {
     @State private var currentProvider: AIProvider = .appleIntelligence
     @State private var showingProviderSelector = false
     @State private var showingAPIKeySettings = false
+    @State private var showCopied = false         // <-- nuevo
     
     @StateObject private var apiKeyManager = APIKeyManager()
     
@@ -141,6 +149,17 @@ struct ChatView: View {
     // Sesión del modelo con instrucciones
     @State private var session: LanguageModelSession?
     #endif
+    
+    // MARK: - Texto formateado del chat para copiar
+    private var chatText: String {
+        messages.map { msg in
+            let sender = msg.isUser ? "Tú" : "IA"
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "HH:mm"
+            let time = dateFormatter.string(from: msg.timestamp)
+            return "[\(time)] \(sender): \(msg.content)"
+        }.joined(separator: "\n")
+    }
     
     var body: some View {
         NavigationStack {
@@ -189,6 +208,17 @@ struct ChatView: View {
                 }
                 #endif
                 
+                // Botón de copiar (derecha)
+                #if os(iOS)
+                ToolbarItem(placement: .topBarTrailing) {
+                    copyButton
+                }
+                #elseif os(macOS)
+                ToolbarItem(placement: .primaryAction) {
+                    copyButton
+                }
+                #endif
+                
                 // Botón de modo (derecha)
                 #if os(iOS)
                 ToolbarItem(placement: .topBarTrailing) {
@@ -230,10 +260,29 @@ struct ChatView: View {
                 APIKeySettingsView(apiKeyManager: apiKeyManager)
             }
         }
+        .overlay(alignment: .top) {
+            if showCopied {
+                Text("¡Copiado!")
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, 50)
+            }
+        }
         .onAppear {
             setupSession()
             detectBestProvider()
         }
+    }
+    
+    // MARK: - Botón de copiar chat
+    private var copyButton: some View {
+        Button(action: copyChat) {
+            Image(systemName: "doc.on.doc")
+        }
+        .disabled(messages.isEmpty)
     }
     
     // MARK: - Botones del toolbar
@@ -405,6 +454,26 @@ struct ChatView: View {
     // MARK: - Computed Properties
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    
+    // MARK: - Copiar el chat al portapapeles
+    private func copyChat() {
+        #if os(iOS)
+        UIPasteboard.general.string = chatText
+        #elseif os(macOS)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(chatText, forType: .string)
+        #endif
+        
+        withAnimation {
+            showCopied = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation {
+                showCopied = false
+            }
+        }
     }
     
     // MARK: - Funciones
